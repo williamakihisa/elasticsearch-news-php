@@ -1,31 +1,14 @@
 <?php
 if (!defined('BASEPATH')) exit('No direct script access allowed');
-header('Access-Control-Allow-Origin: *');
-header("Access-Control-Allow-Methods: *");
+// header('Access-Control-Allow-Origin: *');
+// header("Access-Control-Allow-Methods: *");
 class Elastic extends CI_Controller {
 	function __construct() {
     parent::__construct();
-		$valid_passwords = array (
-					"anyuser" => "anypassword",
-				);
-				$valid_users = array_keys($valid_passwords);
-
-				$user = $_SERVER['PHP_AUTH_USER'];
-				$pass = $_SERVER['PHP_AUTH_PW'];
-
-				$validated = (in_array($user, $valid_users)) && ($pass == $valid_passwords[$user]);
-
-				if (!$validated) {
-					header('WWW-Authenticate: Basic realm="CMS"');
-					header('HTTP/1.0 401 Unauthorized');
-					die ("Not authorized");
-				}
 		$this->load->library('elasticsearch_new');
 		$this->load->library('elasticsearch_new2');
 	}
-	private $keyAccess = array(
-		"anyuser"=>"anykey"
-	);
+
 	protected $allowed_type = array('text', 'date', 'integer', 'double', 'geo', 'keyword');
 	protected $articles_field = array('id', 'title', 'subtitle', 'tag', 'keyword', 'alias', 'alias_old', 'frontpage_section', 'frontpage_category', 'section_id', 'category_id', 'youtube', 'introtext',
 																		'fulltexts', 'written_date', 'publish_date', 'publish', 'written_by', 'editor_by', 'source', 'foto_type', 'livereport', 'wiki_blog', 'foto_name', 'foto_source',
@@ -42,7 +25,7 @@ class Elastic extends CI_Controller {
 			}
 			$check = $this->validate($req, 'create');
 			if (count($check) == 0){
-				 $response = json_encode($this->elasticsearch_new->create($req, ''));
+				 $response = json_encode($this->elasticsearch_new->create($req, $this->input->get('site')));
 			}else{
 				$response = implode(", ", $check);
 			}
@@ -95,47 +78,96 @@ class Elastic extends CI_Controller {
 
 	function search(){
  		$req = $this->input->get();
+		$req = $this->security->xss_clean($req);
  		$check = $this->validate($req, 'search');
  		if (count($check) == 0){
 
- 			$reqkey = $newReq = $findReq = $sort = array();
+ 			$reqkey = $newReq = $findReq = $sort = $reqfind = array();
  			if ((isset($req['field']) && strlen($req['field']) != 0) && (isset($req['keyword']) && strlen($req['keyword']) != 0)){
+
  				$reqkey = explode(",",$req['field']);
+				$reqfind = explode(",",$req['keyword']);
+				if (count($reqkey) == count($reqfind)){
+					$indxf = 0;
+					foreach ($reqkey as $keyfield) {
 
- 				if ((strpos($req['keyword'], '-') !== false) || (strpos($req['field'], 'id') !== false)) {
-					if (strpos($req['field'], 'date') !== false){
-						$newReq[] = array(
-							$reqkey[0] => 'date'
-						);
-					}else{
-						$newReq[] = array(
-							$req['field'] => 'strict'
-						);
+						if ((strpos($keyfield, '-') !== false) || (strpos($keyfield, 'id') !== false)) {
+							if (strpos($keyfield, 'date') !== false){
+								$newReq[] = array(
+									$keyfield => 'date'
+								);
+							}else{
+								$newReq[] = array(
+									$keyfield => 'strict'
+								);
+							}
+						}else{
+							if (strpos($keyfield, 'date') !== false){
+								$newReq[] = array(
+									$keyfield => 'date'
+								);
+							}else{
+								if (strpos($keyfield, '|') !== false){
+									$newReq[] = array(
+										$keyfield => 'or'
+									);
+
+								}else{
+									$newReq[] = array(
+										$keyfield => 'strict'
+									);
+								}
+							}
+						}
+						if (strpos($reqfind[$indxf], '|') !== false){
+							$findReq[] = str_replace('|',' or ',$reqfind[$indxf]);
+						}else{
+							$findReq[] = str_replace('%20',' ',$reqfind[$indxf]);
+						}
+						$indxf++;
+
 					}
- 				}else{
- 					if (strpos($req['field'], 'date') !== false){
- 						$newReq[] = array(
- 							$reqkey[0] => 'date'
- 						);
- 					}else{
-						if (strpos($req['keyword'], '|') !== false){
+				}else{
+					if ((strpos($req['keyword'], '-') !== false) || (strpos($req['field'], 'id') !== false)) {
+						if (strpos($req['field'], 'date') !== false){
 							$newReq[] = array(
-								$req['field'] => 'or'
+								$reqkey[0] => 'date'
 							);
-
 						}else{
 							$newReq[] = array(
-								json_encode($reqkey) => 'combine_wildcard'
+								$req['field'] => 'strict'
 							);
 						}
+					}else{
+						if (strpos($req['field'], 'date') !== false){
+							$newReq[] = array(
+								$reqkey[0] => 'date'
+							);
+						}else{
+							if (strpos($req['keyword'], '|') !== false){
+								$newReq[] = array(
+									$req['field'] => 'or'
+								);
 
- 					}
- 				}
-				if (strpos($req['keyword'], '|') !== false){
-					$findReq[] = str_replace('|',' or ',$req['keyword']);
-				}else{
-					$findReq[] = str_replace('%20',' ',$req['keyword']);
+							}else{
+								$newReq[] = array(
+									json_encode($reqkey) => 'combine_wildcard'
+								);
+							}
+
+						}
+					}
+					if (strpos($req['keyword'], '|') !== false){
+						$findReq[] = str_replace('|',' or ',$req['keyword']);
+					}else{
+						$findReq[] = str_replace('%20',' ',$req['keyword']);
+					}
 				}
+
+				// echo json_encode($newReq);
+				// echo '</br>';
+				// echo json_encode($findReq);
+				// die();
 
  			}
 			if (isset($req['ignore']) && isset($req['ignore_key'])){
@@ -166,7 +198,7 @@ class Elastic extends CI_Controller {
 			}
  			$page = (isset($req['page'])) ? $req['page'] : 0;
  			log_message('ERROR','check elastic tes 1 >>>'.json_encode($newReq).' --- '.json_encode($findReq));
-
+// die('check elastic tes 1 >>>'.json_encode($newReq).' --- '.json_encode($findReq));
  			$response = json_encode($this->elasticsearch_new->search($req['table'], $newReq, $findReq, $sort, $page, $limit, 0, '', $excl));
  		}else{
  			$response = implode(", ", $check);
@@ -360,6 +392,48 @@ class Elastic extends CI_Controller {
 		$this->elasticsearch_new2->insert('articles', $dataitem);
 	}
 
+	function getpopuler(){
+		$result = array(
+			'status' => 0,
+			'data' => array()
+		);
+		if ($this->input->get('fields') && $this->input->get('table')){
+			 $resp = $this->elasticsearch_new->populate($this->input->get('table'), explode(',',$this->input->get('fields')));
+			 $finres = array();
+			 foreach ($resp as $key => $value) {
+					$finres[] = array(
+						'field' => $key,
+						'data' => $value['buckets']
+					);
+			 }
+			 if (count($finres) > 0){
+					$result['status'] = 1;
+					$result['data'] = $finres;
+			 }
+		}
+		echo json_encode($result);
+	}
+
+	public function emptytable(){
+		$result = array(
+			'status' => 0,
+			'message' => ''
+		);
+
+		if ($this->input->get('pass') && $this->input->get('table')){
+			// echo 'pas1';
+			if ($this->authkey == $this->input->get('pass')){
+				// echo 'pas2';
+						$this->elasticsearch_new->truncate($this->input->get('table'));
+						$result['status'] = 1;
+						$result['message'] = 'Success Empty Table '.$this->input->get('table');
+			}else{
+				$result['message'] = 'login pass failed!';
+			}
+		}
+		echo json_encode($result);
+	}
+
 	public function aggregate(){
 		$req = $this->input->get();
 		$reqkey = $newReq = $findReq = $sort = array();
@@ -422,8 +496,7 @@ class Elastic extends CI_Controller {
 			$findReq[] = $req['termrange'];
 
 			$dataterms = explode(",",$this->input->get('terms'));
-			$limit = ($this->input->get('limit')) ? $this->input->get('limit') : 1000;
-			$data = $this->elasticsearch_new->populate($this->input->get('table'), $newReq, $findReq, $this->input->get('termdate'), $this->input->get('interval'), $dataterms, '', $limit);
+			$data = $this->elasticsearch_new->populate($this->input->get('table'), $newReq, $findReq, $this->input->get('termdate'), $this->input->get('interval'), $dataterms, '');
 			echo json_encode($data);
 		}else {
 			echo 'table, terms, termdate, termrange, interval mandatory';
@@ -431,20 +504,20 @@ class Elastic extends CI_Controller {
 
 	}
 
-	public function emptytable(){
-		$result = array(
-			'status' => 0,
-			'message' => ''
-		);
-		if ($this->input->get('pass') && $this->input->get('table')){
-			if ($this->authkey == $this->input->get('pass')){
-						$this->elasticsearch_new->truncate($this->input->get('table'));
-						$result['status'] = 1;
-						$result['message'] = 'Success Empty Table '.$this->input->get('table');
-			}else{
-				$result['message'] = 'login pass failed!';
-			}
+	public function altertable(){
+		$this->load->library('elasticsearch_new');
+		$status = array();
+		if ($this->input->get('field') && $this->input->get('type') && $this->input->get('table')){
+			 $fields = array(
+				 $this->input->get('field') => array(
+					 'type' => $this->input->get('type'),
+					 'analyzer' => 'custom_analyzer',
+					 'fielddata' => true
+				 )
+			 );
+			 $resp = $this->elasticsearch_new->alter($this->input->get('table'), $fields);
+			 $status = $resp;
 		}
-		echo json_encode($result);
+		echo json_encode($status);
 	}
 }
